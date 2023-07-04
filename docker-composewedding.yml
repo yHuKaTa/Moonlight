@@ -1,0 +1,35 @@
+version: '3.9'
+
+services:
+  moonlight:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+    restart: always
+    depends_on:
+      - db
+    networks:
+      - moonlight-network
+    environment:
+      - SPRING_PROFILES_ACTIVE=mysql
+  db:
+    image: mysql:latest
+    restart: always
+    environment:
+      MYSQL_DATABASE: moon_test
+      MYSQL_USER: user
+      MYSQL_PASSWORD: password
+      MYSQL_ROOT_PASSWORD: password
+    ports:
+      - "3307:3306"
+    volumes:
+      - my-db:/var/lib/mysql
+    networks:
+      - moonlight-network
+volumes:
+  my-db:
+
+networks:
+  moonlight-network:
