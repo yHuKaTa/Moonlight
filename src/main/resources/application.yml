@@ -15,10 +15,10 @@ spring:
     forward-headers-strategy: framework
 
   mail:
-    host: mail.nasbg.com
+    host: mail.some-server.domain
     port: 465
-    username: "bootcamp@nasbg.com"
-    password: '%61%,g]AI,g_'
+    username: "someuser@mail.server"
+    password: 'somepassword'
     protocol: smtp
     properties:
       mail.smtp.auth: true
@@ -30,5 +30,5 @@ spring:
 
 paypal:
   mode: sandbox
-  clientId: "AX6Dyi-6lDEba5adpkhXujEvZrEd9YUS4Rwnn7zV9m-qFm_j3lw32Cuv58F7iRmvTvGhXEUlRyStk2q0"
-  clientSecret: "EPBocKbwfMbO_lKSdz4txSPbnIQkkLKtANueo3mhACvj_p0uD31EX1OuCz4jn6leG0u5owDzclEACxsD"
+  clientId: "some-client-id-token"
+  clientSecret: "some-client-id-secret"
