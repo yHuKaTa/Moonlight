@@ -1,6 +1,5 @@
 package com.aacdemy.moonlight.service.impl;
 
-import com.aacdemy.moonlight.dto.payment.PaymentCardRequestDto;
 import com.aacdemy.moonlight.dto.payment.PaymentRequestDto;
 import com.aacdemy.moonlight.dto.payment.PaymentValueAndDescriptionDto;
 import com.aacdemy.moonlight.entity.PaymentStatus;
@@ -14,8 +13,6 @@ import com.aacdemy.moonlight.repository.hotel.ReservationRepository;
 import com.aacdemy.moonlight.repository.restaurant.TableReservationRepository;
 import com.aacdemy.moonlight.repository.screen.ScreenReservationRepository;
 import com.aacdemy.moonlight.service.PaymentService;
-import com.paypal.api.payments.*;
-import com.paypal.api.payments.Payer;
 import com.paypal.core.PayPalHttpClient;
 import com.paypal.http.HttpResponse;
 import com.paypal.orders.*;
@@ -25,9 +22,12 @@ import org.springframework.stereotype.Service;
 
 import java.io.IOException;
 import java.math.BigDecimal;
+import java.net.MalformedURLException;
+import java.net.URL;
 import java.util.ArrayList;
-import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 // да се добавят проверки дали вече е извършено плащането, дали валутата е подходяща и т.н.
 @Service
@@ -66,15 +66,17 @@ public class PaymentServiceImpl implements PaymentService {
     //    "id": "1"
     //}
     @Override
-    public String createPayment(PaymentRequestDto requestDto) {
+    public Map<String, URL> createPayment(PaymentRequestDto requestDto) {
 
-        Object reservation = getReservationType(requestDto);
+        //ЛОГИКА ЗА ПРОВЕРКА НА НЕОБХОДИМОСТ ОТ ПЛАЩАНЕ
+
+        Object reservation = getReservationObject(requestDto);
         Long id = requestDto.getId();
 
         //задаване на необходимите данни за плащането, като сума, валута, описание и др .
         BigDecimal paymentValue = getPaymentValueAndDescription(reservation).getPaymentValue();
         String paymentDescription = getPaymentValueAndDescription(reservation).getPaymentDescription();
-        String currencyCode = "USD"; // не работи с BGN, виж документацията на paypal
+        String currencyCode = "EUR"; // не работи с BGN, виж документацията на paypal
 
         //настройване на  параметрите на заявката за създаване на плащане чрез обекта OrdersCreateRequest:
         OrdersCreateRequest request = new OrdersCreateRequest();
@@ -92,7 +94,9 @@ public class PaymentServiceImpl implements PaymentService {
         List<PurchaseUnitRequest> purchaseUnits = new ArrayList<>();
         purchaseUnits.add(purchaseUnit);
 
-        request.requestBody(new OrderRequest().checkoutPaymentIntent("CAPTURE").purchaseUnits(purchaseUnits));
+        request.requestBody(new OrderRequest()
+                .checkoutPaymentIntent("CAPTURE")
+                .purchaseUnits(purchaseUnits));
 
         try {
             // Изпращане заявката за създаване на плащане към PayPal чрез payPalHttpClient.execute(request)
@@ -101,17 +105,144 @@ public class PaymentServiceImpl implements PaymentService {
             // Полученият отговор от PayPal се съхранява в HttpResponse<Order> response.
             Order createdOrder = response.result();
 
+            String approvalURL = getApprovalUrl(createdOrder);
+            System.out.println(approvalURL);
+
             // сменяме в таблиците статуса на платен
             changePaymentStatusToPAID(requestDto);
 
             //  логика за обработка на отговора от PayPal,
-            return "Payment created: " + createdOrder.id();  //  включваща напр. идентификатора на създаденото плащане от createdOrder
+//            return "Payment created: " + createdOrder.id()
+//                    + " " + createdOrder.status();  //  включваща напр. идентификатора на създаденото плащане от createdOrder
+            Map<String, URL> result = new HashMap<>();
+            result.put(createdOrder.id(), new URL(approvalURL));
+            return result;
 
         } catch (IOException e) {
             e.printStackTrace();
         }
-        return "Error creating payment";
+        Map<String, URL> result = new HashMap<>();
+        result.put("Error creating payment", null);
+        return result;
     }
+
+    private static String getApprovalUrl(Order createdOrder) {
+        List<LinkDescription> links = createdOrder.links();
+        String approvalUrl = "";
+        for (LinkDescription link : links) {
+            if (link.rel().equals("approve")) {
+                approvalUrl = link.href();
+                break;
+            }
+        }
+
+        if (!approvalUrl.isEmpty()) {
+            return approvalUrl;
+        } else {
+            return "Approval URL not found";
+        }
+    }
+
+    public String authorizePayment(String createdOrderId) {
+        try {
+
+            OrdersAuthorizeRequest authorizeRequest = new OrdersAuthorizeRequest(createdOrderId);
+            authorizeRequest.header("PayPal-Request-Id", "AUTH-" + createdOrderId);
+            authorizeRequest.requestBody(new AuthorizeRequest());
+
+            // Изпращане на заявката за одобряване на поръчката
+            HttpResponse<Order> authorizeResponse = payPalHttpClient.execute(authorizeRequest);
+
+            // Получаване на одобрената поръчка
+            Order authorizedOrder = authorizeResponse.result();
+
+            // Проверка на статуса на одобрената поръчка
+            if (authorizedOrder.status().equals("COMPLETED")) {
+                // Плащането е успешно одобрено
+                System.out.println("Payment approved: " + authorizedOrder.id());
+            } else {
+                // Плащането не е било одобрено
+                System.out.println("Payment approval failed");
+            }
+
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+
+////approval code
+//      try {
+//            OrdersAuthorizeRequest authorizeRequest = new OrdersAuthorizeRequest(createdOrderId);
+//
+//
+//            authorizedOrder = payPalHttpClient.execute(authorizeRequest).result();
+//
+//            // Проверка на статуса на одобреното плащане
+//            if (authorizedOrder.status().equals("COMPLETED")) {
+//                // Плащането е успешно одобрено
+//                System.out.println("Payment approved: " + authorizedOrder.id());
+//                return authorizedOrder.id();
+//            } else {
+//                // Плащането не е било одобрено
+//                System.out.println("Payment approval failed");
+//            }
+//            String approvalUrl = "";
+//
+//// Извличане на "approve" URL от authorizedOrder.links()
+//            List<LinkDescription> links = authorizedOrder.links();
+//            for (LinkDescription link : links) {
+//                if (link.rel().equals("approve")) {
+//                    approvalUrl = link.href();
+//                    break;
+//                }
+//            }
+//
+//// Пренасочване на потребителя към "approve" URL
+//            if (!approvalUrl.isEmpty()) {
+//                // Вашата логика за пренасочване на потребителя към approvalUrl
+//            } else {
+//                System.out.println("Approval URL not found");
+//            }
+//
+//        } catch (IOException e) {
+//            System.out.println("authorizePayment:");
+//            e.printStackTrace();
+//        }
+//
+        // Връщане на грешка при улавянето на плащането
+        return "Error approve payment";
+
+    }
+
+
+    //confirm, authorize, capture
+    public String executePayment(String createdOrderId) {
+
+
+        try {
+            // Изпращане на заявка за улавяне на плащането към PayPal
+            Order orderToCapture = payPalHttpClient.execute(
+                    new OrdersCaptureRequest(createdOrderId)).result();
+
+            // Проверка дали плащането е успешно улавено
+            if (orderToCapture != null && orderToCapture.status().equals("COMPLETED")) {
+                // Плащането е успешно улавено
+                // Изпълнете допълнителна логика тук, ако е необходимо
+
+                return "Payment captured successfully";
+            } else {
+                // Плащането не е успешно улавено
+                // Изпълнете допълнителна логика тук, ако е необходимо
+
+                return "Payment capture failed";
+            }
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+
+        // Връщане на грешка при улавянето на плащането
+        return "Error capturing payment";
+    }
+
 
     //{
     //  "reservationType": "RoomReservation",
@@ -123,7 +254,7 @@ public class PaymentServiceImpl implements PaymentService {
 //    @Override
 //    public String createCardPayment(PaymentCardRequestDto requestDto) {
 //
-//        Object reservation = getReservationType(requestDto);
+//        Object reservation = getReservationObject(requestDto);
 //        Long id = requestDto.getId();
 //
 //        //задаване на необходимите данни за плащането, като сума, валута, описание и др .
@@ -193,7 +324,7 @@ public class PaymentServiceImpl implements PaymentService {
 
 
     // Разпознаване на обекта
-    public Object getReservationType(PaymentRequestDto requestDto) {
+    public Object getReservationObject(PaymentRequestDto requestDto) {
 
         Object reservation;
         Long id = requestDto.getId();
@@ -266,5 +397,6 @@ public class PaymentServiceImpl implements PaymentService {
                 .paymentDescription(paymentDescription)
                 .build();
     }
+
 
 }
